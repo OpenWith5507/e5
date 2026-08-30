@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>@OpenWith</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+}
+
+/* 飞舞的小图片区域 */
+#flyingImages {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    display: none;
+    pointer-events: none;
+}
+
+.flying-image {
+    position: absolute;
+    opacity: 0.9;
+    will-change: transform;
+}
+
+/* 图片0 */
+#img0 {
+    display: none;
+    position: fixed;
+    z-index: 5;
+    left: 50%;
+    top: 10%;
+    transform: translateX(-50%);
+    width: 350px;
+}
+
+/* 主图容器 (定位基准点居中) */
+#images {
+    display: none;
+    position: fixed;
+    z-index: 5;
+    left: 50%;
+    top: 70%;
+    width: 0;
+    height: 0;
+}
+
+#images img {
+    position: absolute;
+    width: 42px; /* 调整为原210px的20% */
+    transform-origin: center center;
+    will-change: transform;
+}
+
+/* 开始按钮 */
+#start {
+    position: fixed;
+    z-index: 20;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 35px;
+    padding: 20px 60px;
+    cursor: pointer;
+}
+
+/* 倒计时 */
+#count {
+    position: fixed;
+    z-index: 20;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 100px;
+}
+</style>
+</head>
+<body>
+
+<div id="flyingImages"></div>
+
+<button id="start">开始</button>
+
+<div id="count"></div>
+
+<img id="img0" src="图片0.gif">
+
+<div id="images">
+    <img id="img1" src="图片1.png">
+    <img id="img2" src="图片2.png">
+    <img id="img3" src="图片3.png">
+    <img id="img4" src="图片4.png">
+    <img id="img5" src="图片5.png">
+</div>
+
+<script>
+const start = document.getElementById("start");
+const count = document.getElementById("count");
+const img0 = document.getElementById("img0");
+const images = document.getElementById("images");
+const flying = document.getElementById("flyingImages");
+
+const imgs = [
+    document.getElementById("img1"),
+    document.getElementById("img2"),
+    document.getElementById("img3"),
+    document.getElementById("img4"),
+    document.getElementById("img5")
+];
+
+/* 飞舞图片增强参数 */
+const FLY_COUNT = 100;
+const FLY_MIN_SIZE = 30;
+const FLY_MAX_SIZE = 70;
+const FLY_MIN_SPEED = 3;
+const FLY_MAX_SPEED = 15;
+
+/* 主图基础参数 (缩小至 20%) */
+const BASE_WIDTH = 42;                      // 原210px的20%
+const MIN_GAP = 10;                         // 排斥最小间距调整
+const BASE_Y_OFFSETS = [6, 0, -6, 0, 6];    // 纵向分布比例缩减
+
+let audioCtx = null;
+let analyser = null;
+let audioData = null;
+
+// 1. 页面加载完成立即申请麦克风权限并初始化音频节点
+window.addEventListener("load", () => {
+    initMic();
+});
+
+async function initMic() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        audioData = new Uint8Array(analyser.frequencyBinCount);
+        
+        renderLoop();
+    } catch (e) {
+        console.error("麦克风权限获取失败或被拒绝:", e);
+    }
+}
+
+// 2. 主渲染循环（处理排斥机制与跳动效果）
+function renderLoop() {
+    let volume = 0;
+    if (analyser && audioData) {
+        analyser.getByteFrequencyData(audioData);
+        let sum = 0;
+        for (let i = 0; i < audioData.length; i++) {
+            sum += audioData[i];
+        }
+        volume = sum / audioData.length;
+    }
+
+    // 计算各图片缩放倍率
+    const scales = imgs.map((_, index) => {
+        let extraOscillation = Math.sin(performance.now() / 60 + index * 1.2) * 0.3;
+        let dynamicScale = 1 + (volume / 8) + extraOscillation; 
+        return Math.max(0.5, dynamicScale);
+    });
+
+    // 基于缩放后的实际物理宽度计算水平布局与排斥关系
+    const dynamicWidths = scales.map(s => BASE_WIDTH * s);
+    const totalWidth = dynamicWidths.reduce((acc, w) => acc + w, 0) + (imgs.length - 1) * MIN_GAP;
+
+    let currentX = -totalWidth / 2;
+
+    imgs.forEach((img, index) => {
+        const currentWidth = dynamicWidths[index];
+        const centerX = currentX + currentWidth / 2;
+        currentX += currentWidth + MIN_GAP;
+
+        const jumpY = BASE_Y_OFFSETS[index] - (volume * 8); 
+        const rotateDeg = Math.sin(performance.now() / 100 + index) * (volume / 3);
+
+        img.style.transform = `translate(${centerX - BASE_WIDTH / 2}px, ${jumpY}px) scale(${scales[index]}) rotate(${rotateDeg}deg)`;
+    });
+
+    requestAnimationFrame(renderLoop);
+}
+
+// 3. 开始按钮触发逻辑
+start.onclick = async () => {
+    if (audioCtx && audioCtx.state === "suspended") {
+        await audioCtx.resume();
+    }
+
+    start.style.display = "none";
+
+    for (let i = 3; i > 0; i--) {
+        count.innerHTML = i;
+        await sleep(1000);
+    }
+    count.innerHTML = "";
+
+    img0.style.display = "block";
+// 倒计时在这里
+    setTimeout(() => {
+        img0.style.display = "none";
+        images.style.display = "block";
+        createFlyingImages();
+    }, 30000);
+};
+
+function sleep(t) {
+    return new Promise(r => setTimeout(r, t));
+}
+
+// 4. 飞舞图片生成
+function createFlyingImages() {
+    flying.style.display = "block";
+
+    for (let i = 0; i < FLY_COUNT; i++) {
+        let img = document.createElement("img");
+        img.src = "图片-1.jpg";
+        img.className = "flying-image";
+
+        let size = random(FLY_MIN_SIZE, FLY_MAX_SIZE);
+        img.style.width = size + "px";
+
+        let x = Math.random() * innerWidth;
+        let y = Math.random() * innerHeight;
+
+        let dx = random(FLY_MIN_SPEED, FLY_MAX_SPEED) * sign();
+        let dy = random(FLY_MIN_SPEED, FLY_MAX_SPEED) * sign();
+
+        let rotate = Math.random() * 360;
+        let rotateSpeed = random(2, 6) * sign();
+
+        flying.appendChild(img);
+
+        function move() {
+            x += dx;
+            y += dy;
+            rotate += rotateSpeed;
+
+            if (x > innerWidth + size) x = -size;
+            if (x < -size) x = innerWidth + size;
+            if (y > innerHeight + size) y = -size;
+            if (y < -size) y = innerHeight + size;
+
+            img.style.transform = `translate(${x}px, ${y}px) rotate(${rotate}deg)`;
+            requestAnimationFrame(move);
+        }
+        move();
+    }
+}
+
+function random(a, b) {
+    return Math.random() * (b - a) + a;
+}
+
+function sign() {
+    return Math.random() > 0.5 ? 1 : -1;
+}
+</script>
+</body>
+</html>
